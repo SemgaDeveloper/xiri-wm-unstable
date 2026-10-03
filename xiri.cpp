@@ -13,14 +13,21 @@
 #include <xcb/xproto.h>
 
 // Basic Setup for the first time
-const char *terminal = "kitty";
-const char *application_launcher = "rofi -show drun";
 
 
 // Test Structures for future development
+
+struct Settings {
+  const char *terminal = "kitty";
+  const char *application_launcher = "rofi -show drun";
+  const char *display_name = "HDMI-1";
+};
+
 struct Windows {
   uint32_t win_width;
   uint32_t win_height;
+  int32_t win_x_pos;
+  int32_t win_y_pos;
 };
 
 struct Workspaces {
@@ -40,6 +47,8 @@ struct Workspaces {
   return atom;
 }*/
 
+
+// Functions for WM work
 void spawn(const char *exec) {
   pid_t pid = fork();
   if (pid == 0) {
@@ -47,6 +56,20 @@ void spawn(const char *exec) {
     execlp("/bin/sh", "sh", "-c", exec, (char *)NULL);
     exit(1);
   }
+}
+
+void changeResolution(const char *output, uint32_t w, uint32_t h) {
+  std::string cmd = std::string("xrandr --output ") + output +
+                    " --mode " + std::to_string(w) + "x" + std::to_string(h);
+  system(cmd.c_str());
+}
+
+void windowResize(xcb_connection_t *conn, xcb_window_t win, const Windows &winstruct) {
+  uint32_t values[4] = {(uint32_t)winstruct.win_x_pos, (uint32_t)winstruct.win_y_pos,
+                        winstruct.win_width, winstruct.win_height};
+  uint16_t mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
+                  XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+  xcb_configure_window(conn, win, mask, values);
 }
 
 
@@ -84,11 +107,20 @@ int main() {
     return 1;
   }
   xcb_flush(connection);
-  spawn(terminal);
+  Windows winstruct;
+  Settings config;
+  //changeResolution(config.display_name, winstruct.win_width, winstruct.win_height);
+  spawn(config.terminal);
   while (xcb_generic_event_t *event = xcb_wait_for_event(connection)) {
     auto *e = (xcb_map_request_event_t *)event;
     switch (event->response_type & ~0x80) {
       case XCB_MAP_REQUEST:
+        Windows winstruct;
+        winstruct.win_x_pos = 0;
+        winstruct.win_y_pos = 0;
+        winstruct.win_width = 1920;
+        winstruct.win_height = 1080;
+        windowResize(connection, e->window, winstruct);
         mapWindow(connection, e->window);
         break;
       case XCB_UNMAP_NOTIFY:
