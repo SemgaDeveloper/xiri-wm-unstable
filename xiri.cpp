@@ -1,6 +1,8 @@
 // Basic cpp directives
 #include <iostream>
 #include <string>
+#include <vector>
+#include <functional>
 
 // Libs directives
 #include <stdlib.h>
@@ -12,7 +14,8 @@
 #include <xcb/xcb_keysyms.h>
 #include <xcb/xproto.h>
 
-// Basic Setup for the first time
+// Default X11 directives
+#include <X11/keysyms.h>
 
 
 // Test Structures for future development
@@ -24,16 +27,55 @@ struct Settings {
 };
 
 struct Windows {
-  uint32_t win_width;
-  uint32_t win_height;
-  int32_t win_x_pos;
-  int32_t win_y_pos;
+  uint32_t win_width = 1920;
+  uint32_t win_height = 1080;
+  int32_t win_x_pos = 0;
+  int32_t win_y_pos = 0;
 };
 
 struct Workspaces {
   uint32_t current_workspace;
   uint32_t workpaces_count;
 };
+
+struct Bindings {
+  uint16_t mods;
+  xcb_keysym_t sym;
+  std::function<void()> action;
+  xcb_keycode_t code = 0;
+};
+
+// Input Setup
+static std::vector<Bindings> bindings;
+
+static const uint16_t KRelevantMods = XCB_MOD_MASK_SHIFT | XCB_MOD_MASK_CONTROL,
+                                      XCB_MOD_MASK_1, XCB_MOD_MASK_4;
+static const uint16_t KLocks[4] = {0, XCB_MOD_MASK_LOCK, XCB_MOD_MASK_2, XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2};
+
+
+void grabBindings(xcb_connection_t *conn, xcb_window_t root, xcb_keysymbols_t *syms) {
+  xcb_ungrab_key(conn, XCB_GRAB_ANY, root, XCB_MOD_MASK_ANY);
+  for (auto &b : bindings) {
+    xcb_keycode_t *kc = xcb_key_symbols_get_keycode(syms, b.sym);
+    if (!kc) {
+      fprintf(stderr, "no key for keysyms 0x%x\n", (unsigned)b.sym);
+      b.code = 0;
+      continue;
+    }
+    b.code = kc[0];
+    free(kc);
+    for (uint16_t lock : KLocks)
+      xcb_grab_key(conn, 1, root, b.mods | lock, b.code,
+                   XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+  }
+  xcb_flush(connection);
+}
+
+void handlekeyPress(xcb_key_press_event_t *kp) {
+  uint16_t mode = kp->state & KRelevantMods;
+  for(auto &b : bindings)
+    if (b.code == kp->detail && b.mods == mods) { b.action(); return; }
+}
 
 // Atom Helper
 /*static xcb_atom_t internAtom(xcb_connection_t *conn, const char *name) {
@@ -109,24 +151,31 @@ int main() {
   xcb_flush(connection);
   Windows winstruct;
   Settings config;
-  //changeResolution(config.display_name, winstruct.win_width, winstruct.win_height);
+  changeResolution(config.display_name, winstruct.win_width, winstruct.win_height);
   spawn(config.terminal);
-  while (xcb_generic_event_t *event = xcb_wait_for_event(connection)) {
-    auto *e = (xcb_map_request_event_t *)event;
-    switch (event->response_type & ~0x80) {
-      case XCB_MAP_REQUEST:
+    while (xcb_generic_event_t *event = xcb_wait_for_event(connection)) {
+      auto *e = (xcb_map_request_event_t *)event;
+      switch (event->response_type & ~0x80) {
+      case XCB_MAP_REQUEST: {
         Windows winstruct;
-        winstruct.win_x_pos = 0;
-        winstruct.win_y_pos = 0;
-        winstruct.win_width = 1920;
-        winstruct.win_height = 1080;
+        winstruct.win_x_pos;
+        winstruct.win_y_pos;
+        winstruct.win_width;
+        winstruct.win_height;
         windowResize(connection, e->window, winstruct);
         mapWindow(connection, e->window);
         break;
-      case XCB_UNMAP_NOTIFY:
+      }
+      case XCB_UNMAP_NOTIFY: {
         unmapWindow(connection, e->window);
         break;
+      }
+      case XCB_KEY_PRESS: {
+        xcb_key_release_event_t *kp = (xcb_key_release_event_t *)event;
+        handlekeyPress(kp->state);
+        break;
+      }
     }
+    return 0;
   }
-  return 0;
 }
