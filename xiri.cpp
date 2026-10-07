@@ -9,13 +9,12 @@
 #include <unistd.h>
 #include <stdint.h>
 
-// Xcb directives
+// X11 directives
 #include <xcb/xcb.h>
 #include <xcb/xcb_keysyms.h>
 #include <xcb/xproto.h>
+#include <X11/keysym.h>
 
-// Default X11 directives
-#include <X11/keysyms.h>
 
 
 // Test Structures for future development
@@ -48,12 +47,12 @@ struct Bindings {
 // Input Setup
 static std::vector<Bindings> bindings;
 
-static const uint16_t KRelevantMods = XCB_MOD_MASK_SHIFT | XCB_MOD_MASK_CONTROL,
-                                      XCB_MOD_MASK_1, XCB_MOD_MASK_4;
+static const uint16_t KRelevantMods = XCB_MOD_MASK_SHIFT | XCB_MOD_MASK_CONTROL |
+                                      XCB_MOD_MASK_1 | XCB_MOD_MASK_4;
 static const uint16_t KLocks[4] = {0, XCB_MOD_MASK_LOCK, XCB_MOD_MASK_2, XCB_MOD_MASK_LOCK | XCB_MOD_MASK_2};
 
 
-void grabBindings(xcb_connection_t *conn, xcb_window_t root, xcb_keysymbols_t *syms) {
+void grabBindings(xcb_connection_t *conn, xcb_window_t root, xcb_key_symbols_t *syms) {
   xcb_ungrab_key(conn, XCB_GRAB_ANY, root, XCB_MOD_MASK_ANY);
   for (auto &b : bindings) {
     xcb_keycode_t *kc = xcb_key_symbols_get_keycode(syms, b.sym);
@@ -68,11 +67,11 @@ void grabBindings(xcb_connection_t *conn, xcb_window_t root, xcb_keysymbols_t *s
       xcb_grab_key(conn, 1, root, b.mods | lock, b.code,
                    XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
   }
-  xcb_flush(connection);
+  xcb_flush(conn);
 }
 
 void handlekeyPress(xcb_key_press_event_t *kp) {
-  uint16_t mode = kp->state & KRelevantMods;
+  uint16_t mods = kp->state & KRelevantMods;
   for(auto &b : bindings)
     if (b.code == kp->detail && b.mods == mods) { b.action(); return; }
 }
@@ -148,34 +147,41 @@ int main() {
     free(error);
     return 1;
   }
+
   xcb_flush(connection);
   Windows winstruct;
   Settings config;
   changeResolution(config.display_name, winstruct.win_width, winstruct.win_height);
+  
+  xcb_key_symbols_t *syms = xcb_key_symbols_alloc(connection);
+  bindings = {
+    {XCB_MOD_MASK_4, XK_Return, [&config]{ spawn(config.terminal); }},
+  };
+  grabBindings(connection, screen->root, syms);
+
   spawn(config.terminal);
     while (xcb_generic_event_t *event = xcb_wait_for_event(connection)) {
       auto *e = (xcb_map_request_event_t *)event;
       switch (event->response_type & ~0x80) {
       case XCB_MAP_REQUEST: {
         Windows winstruct;
-        winstruct.win_x_pos;
-        winstruct.win_y_pos;
-        winstruct.win_width;
-        winstruct.win_height;
         windowResize(connection, e->window, winstruct);
         mapWindow(connection, e->window);
         break;
       }
       case XCB_UNMAP_NOTIFY: {
-        unmapWindow(connection, e->window);
+        printf("Unmap Notify received\n");
         break;
       }
       case XCB_KEY_PRESS: {
         xcb_key_release_event_t *kp = (xcb_key_release_event_t *)event;
-        handlekeyPress(kp->state);
+        handlekeyPress(kp);
         break;
       }
     }
-    return 0;
+    free(event);
   }
+  xcb_key_symbols_free(syms);
+  xcb_disconnect(connection);
+  return 0;
 }
